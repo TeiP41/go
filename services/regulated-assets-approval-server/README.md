@@ -133,7 +133,8 @@ Note: The example responses below have set their `base-url` env var to `"https:/
 
 **Responses:**
 
-_Revised:_
+_Revised:_ This response means the transaction was revised to be made compliant,
+and signed by the issuer. For more info read the SEP-8 [Revised] section.
 
 ```json
 {
@@ -143,7 +144,8 @@ _Revised:_
 }
 ```
 
-_Rejected:_
+_Rejected:_ This response means the transaction is not and couldn't be made
+compliant. For more info read the SEP-8 [Rejected] section.
 
 ```json
 {
@@ -153,6 +155,10 @@ _Rejected:_
 ```
 
 _Action Required:_
+This response means the user must complete an action before this transaction can
+be approved. The approval server will provide a URL that facilitates the action.
+Upon completion, the user can resubmit the transaction. For more info read the
+SEP-8 [Action Required] section.
 
 ```json
 {
@@ -263,3 +269,5 @@ Note: This functionality is for test/debugging purposes and it's not part of the
 [SEP-8]: https://github.com/stellar/stellar-protocol/blob/7c795bb9abc606cd1e34764c4ba07900d58fe26e/ecosystem/sep-0008.md
 [authorization flags]: https://github.com/stellar/stellar-protocol/blob/7c795bb9abc606cd1e34764c4ba07900d58fe26e/ecosystem/sep-0008.md#authorization-flags
 [Action Required]: https://github.com/stellar/stellar-protocol/blob/7c795bb9abc606cd1e34764c4ba07900d58fe26e/ecosystem/sep-0008.md#action-required
+[Rejected]: https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0008.md#rejected
+[Revised]:https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0008.md#revised
