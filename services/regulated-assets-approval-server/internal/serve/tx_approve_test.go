@@ -511,6 +511,7 @@ func TestTxApproveHandlerTxApprove_actionRequired(t *testing.T) {
 	}
 	require.Equal(t, wantResp, txApprovalResp)
 }
+
 func TestTxApproveHandlerTxApprove_revised(t *testing.T) {
 	ctx := context.Background()
 	db := dbtest.Open(t)
