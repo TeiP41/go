@@ -197,10 +197,10 @@ func TestTxApproveHandlerKYCRequiredMessageIfNeeded(t *testing.T) {
 	}
 
 	// TEST Successful KYC required response.
-	// actionRequiredMessage should return "Payments exceeding [kycThreshold] [assetCode] requires KYC approval..." message.
+	// actionRequiredMessage should return "Payments exceeding [kycThreshold] [assetCode] require KYC approval..." message.
 	actionRequiredMessage, err = h.kycRequiredMessageIfNeeded(&paymentOP)
 	require.NoError(t, err)
-	assert.Equal(t, `Payments exceeding 500.00 GOAT requires KYC approval. Please provide an email address.`, actionRequiredMessage)
+	assert.Equal(t, `Payments exceeding 500.00 GOAT require KYC approval. Please provide an email address.`, actionRequiredMessage)
 }
 
 func TestTxApproveHandlerHandleKYCRequiredOperationIfNeeded(t *testing.T) {
@@ -248,7 +248,7 @@ func TestTxApproveHandlerHandleKYCRequiredOperationIfNeeded(t *testing.T) {
 	require.NoError(t, err)
 	wantTXApprovalResponse := txApprovalResponse{
 		Status:       sep8Status("action_required"),
-		Message:      `Payments exceeding 500.00 GOAT requires KYC approval. Please provide an email address.`,
+		Message:      `Payments exceeding 500.00 GOAT require KYC approval. Please provide an email address.`,
 		StatusCode:   http.StatusOK,
 		ActionURL:    actionRequiredTxApprovalResponse.ActionURL,
 		ActionMethod: "POST",
@@ -416,7 +416,7 @@ func TestTxApproveHandlerTxApprove(t *testing.T) {
 	require.NoError(t, err)
 	wantRejectedResponse = txApprovalResponse{
 		Status:     "rejected",
-		Error:      "The source account is invalid.",
+		Error:      "Transaction source account is invalid.",
 		StatusCode: http.StatusBadRequest,
 	}
 	assert.Equal(t, &wantRejectedResponse, rejectedResponse)

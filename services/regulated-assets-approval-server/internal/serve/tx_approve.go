@@ -120,7 +120,7 @@ func (h txApproveHandler) validateInput(ctx context.Context, in txApproveRequest
 		log.Ctx(ctx).Errorf("transaction %s sourceAccount is the same as the server issuer account %s",
 			in.Tx,
 			h.issuerKP.Address())
-		return NewRejectedTxApprovalResponse("The source account is invalid."), nil
+		return NewRejectedTxApprovalResponse("Transaction source account is invalid."), nil
 	}
 
 	if len(tx.Operations()) != 1 {
@@ -300,11 +300,11 @@ func (h txApproveHandler) kycRequiredMessageIfNeeded(paymentOp *txnbuild.Payment
 		return "", errors.Wrap(err, "parsing account payment amount from string to Int64")
 	}
 	if paymentAmount > h.kycThreshold {
-		kycThreshold, err := convertThresholdToReadableString(h.kycThreshold)
+		kycThreshold, err := convertAmountToReadableString(h.kycThreshold)
 		if err != nil {
 			return "", errors.Wrap(err, "converting kycThreshold to human readable string")
 		}
-		return fmt.Sprintf(`Payments exceeding %s %s requires KYC approval. Please provide an email address.`, kycThreshold, h.assetCode), nil
+		return fmt.Sprintf(`Payments exceeding %s %s require KYC approval. Please provide an email address.`, kycThreshold, h.assetCode), nil
 	}
 	return "", nil
 }
