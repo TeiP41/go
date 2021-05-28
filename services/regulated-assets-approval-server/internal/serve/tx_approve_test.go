@@ -10,7 +10,6 @@ import (
 	"github.com/stellar/go/keypair"
 	"github.com/stellar/go/network"
 	"github.com/stellar/go/protocols/horizon"
-	"github.com/stellar/go/protocols/horizon/base"
 	"github.com/stellar/go/services/regulated-assets-approval-server/internal/db/dbtest"
 	"github.com/stellar/go/txnbuild"
 	"github.com/stretchr/testify/assert"
@@ -18,7 +17,7 @@ import (
 )
 
 func TestTxApproveHandlerValidate(t *testing.T) {
-	// empty asset issuer KP.
+	// empty issuer KP.
 	h := txApproveHandler{}
 	err := h.validate()
 	require.EqualError(t, err, "issuer keypair cannot be nil")
@@ -217,16 +216,6 @@ func TestTxApproveHandler_validateInput(t *testing.T) {
 	require.Equal(t, gotTx, tx)
 }
 
-func TestConvertAmountToReadableString(t *testing.T) {
-	parsedAmount, err := amount.ParseInt64("500")
-	require.NoError(t, err)
-	assert.Equal(t, int64(5000000000), parsedAmount)
-
-	readableAmount, err := convertAmountToReadableString(parsedAmount)
-	require.NoError(t, err)
-	assert.Equal(t, "500.00", readableAmount)
-}
-
 func TestTxApproveHandler_handleActionRequiredResponseIfNeeded(t *testing.T) {
 	ctx := context.Background()
 	db := dbtest.Open(t)
@@ -311,36 +300,30 @@ func TestTxApproveHandlerTxApprove(t *testing.T) {
 	defer conn.Close()
 
 	// Perpare accounts on mock horizon.
-	issuerAccKeyPair := keypair.MustRandom()
-	senderAccKP := keypair.MustRandom()
-	receiverAccKP := keypair.MustRandom()
+	issuerKP := keypair.MustRandom()
+	senderKP := keypair.MustRandom()
+	receiverKP := keypair.MustRandom()
 	assetGOAT := txnbuild.CreditAsset{
 		Code:   "GOAT",
-		Issuer: issuerAccKeyPair.Address(),
+		Issuer: issuerKP.Address(),
 	}
 	horizonMock := horizonclient.MockClient{}
 	horizonMock.
-		On("AccountDetail", horizonclient.AccountRequest{AccountID: issuerAccKeyPair.Address()}).
+		On("AccountDetail", horizonclient.AccountRequest{AccountID: issuerKP.Address()}).
 		Return(horizon.Account{
-			AccountID: issuerAccKeyPair.Address(),
+			AccountID: issuerKP.Address(),
 			Sequence:  "1",
-			Balances: []horizon.Balance{
-				{
-					Asset:   base.Asset{Code: "ASSET", Issuer: issuerAccKeyPair.Address()},
-					Balance: "0",
-				},
-			},
 		}, nil)
 	horizonMock.
-		On("AccountDetail", horizonclient.AccountRequest{AccountID: senderAccKP.Address()}).
+		On("AccountDetail", horizonclient.AccountRequest{AccountID: senderKP.Address()}).
 		Return(horizon.Account{
-			AccountID: senderAccKP.Address(),
+			AccountID: senderKP.Address(),
 			Sequence:  "2",
 		}, nil)
 	horizonMock.
-		On("AccountDetail", horizonclient.AccountRequest{AccountID: receiverAccKP.Address()}).
+		On("AccountDetail", horizonclient.AccountRequest{AccountID: receiverKP.Address()}).
 		Return(horizon.Account{
-			AccountID: receiverAccKP.Address(),
+			AccountID: receiverKP.Address(),
 			Sequence:  "3",
 		}, nil)
 
@@ -348,7 +331,7 @@ func TestTxApproveHandlerTxApprove(t *testing.T) {
 	kycThresholdAmount, err := amount.ParseInt64("500")
 	require.NoError(t, err)
 	handler := txApproveHandler{
-		issuerKP:          issuerAccKeyPair,
+		issuerKP:          issuerKP,
 		assetCode:         assetGOAT.GetCode(),
 		horizonClient:     &horizonMock,
 		networkPassphrase: network.TestNetworkPassphrase,
@@ -384,7 +367,7 @@ func TestTxApproveHandlerTxApprove(t *testing.T) {
 	assert.Equal(t, &wantRejectedResponse, rejectedResponse)
 
 	// Prepare invalid(non generic transaction) "tx" for txApprove.
-	senderAcc, err := handler.horizonClient.AccountDetail(horizonclient.AccountRequest{AccountID: senderAccKP.Address()})
+	senderAcc, err := handler.horizonClient.AccountDetail(horizonclient.AccountRequest{AccountID: senderKP.Address()})
 	require.NoError(t, err)
 	tx, err := txnbuild.NewTransaction(
 		txnbuild.TransactionParams{
@@ -392,7 +375,7 @@ func TestTxApproveHandlerTxApprove(t *testing.T) {
 			IncrementSequenceNum: true,
 			Operations: []txnbuild.Operation{
 				&txnbuild.Payment{
-					Destination: receiverAccKP.Address(),
+					Destination: receiverKP.Address(),
 					Amount:      "1",
 					Asset:       assetGOAT,
 				},
@@ -405,7 +388,7 @@ func TestTxApproveHandlerTxApprove(t *testing.T) {
 	feeBumpTx, err := txnbuild.NewFeeBumpTransaction(
 		txnbuild.FeeBumpTransactionParams{
 			Inner:      tx,
-			FeeAccount: receiverAccKP.Address(),
+			FeeAccount: receiverKP.Address(),
 			BaseFee:    2 * txnbuild.MinBaseFee,
 		},
 	)
@@ -422,7 +405,7 @@ func TestTxApproveHandlerTxApprove(t *testing.T) {
 	assert.Equal(t, &wantRejectedResponse, rejectedResponse) // wantRejectedResponse is identical to "if can't parse XDR".
 
 	// Prepare transaction sourceAccount the same as the server issuer account for txApprove.
-	issuerAcc, err := handler.horizonClient.AccountDetail(horizonclient.AccountRequest{AccountID: issuerAccKeyPair.Address()})
+	issuerAcc, err := handler.horizonClient.AccountDetail(horizonclient.AccountRequest{AccountID: issuerKP.Address()})
 	require.NoError(t, err)
 	tx, err = txnbuild.NewTransaction(
 		txnbuild.TransactionParams{
@@ -430,7 +413,7 @@ func TestTxApproveHandlerTxApprove(t *testing.T) {
 			IncrementSequenceNum: true,
 			Operations: []txnbuild.Operation{
 				&txnbuild.Payment{
-					Destination: senderAccKP.Address(),
+					Destination: senderKP.Address(),
 					Amount:      "1",
 					Asset:       assetGOAT,
 				},
@@ -463,8 +446,8 @@ func TestTxApproveHandlerTxApprove(t *testing.T) {
 			IncrementSequenceNum: true,
 			Operations: []txnbuild.Operation{
 				&txnbuild.Payment{
-					SourceAccount: issuerAccKeyPair.Address(),
-					Destination:   senderAccKP.Address(),
+					SourceAccount: issuerKP.Address(),
+					Destination:   senderKP.Address(),
 					Amount:        "1",
 					Asset:         assetGOAT,
 				},
@@ -497,7 +480,7 @@ func TestTxApproveHandlerTxApprove(t *testing.T) {
 			IncrementSequenceNum: true,
 			Operations: []txnbuild.Operation{
 				&txnbuild.AllowTrust{
-					Trustor:   receiverAccKP.Address(),
+					Trustor:   receiverKP.Address(),
 					Type:      assetGOAT,
 					Authorize: true,
 				},
@@ -529,14 +512,14 @@ func TestTxApproveHandlerTxApprove(t *testing.T) {
 			IncrementSequenceNum: true,
 			Operations: []txnbuild.Operation{
 				&txnbuild.Payment{
-					SourceAccount: senderAccKP.Address(),
-					Destination:   receiverAccKP.Address(),
+					SourceAccount: senderKP.Address(),
+					Destination:   receiverKP.Address(),
 					Amount:        "1",
 					Asset:         assetGOAT,
 				},
 				&txnbuild.Payment{
-					SourceAccount: senderAccKP.Address(),
-					Destination:   receiverAccKP.Address(),
+					SourceAccount: senderKP.Address(),
+					Destination:   receiverKP.Address(),
 					Amount:        "2",
 					Asset:         assetGOAT,
 				},
@@ -566,14 +549,14 @@ func TestTxApproveHandlerTxApprove(t *testing.T) {
 	tx, err = txnbuild.NewTransaction(
 		txnbuild.TransactionParams{
 			SourceAccount: &horizon.Account{
-				AccountID: senderAccKP.Address(),
+				AccountID: senderKP.Address(),
 				Sequence:  "50",
 			},
 			IncrementSequenceNum: true,
 			Operations: []txnbuild.Operation{
 				&txnbuild.Payment{
-					SourceAccount: senderAccKP.Address(),
-					Destination:   receiverAccKP.Address(),
+					SourceAccount: senderKP.Address(),
+					Destination:   receiverKP.Address(),
 					Amount:        "1",
 					Asset:         assetGOAT,
 				},
@@ -598,4 +581,14 @@ func TestTxApproveHandlerTxApprove(t *testing.T) {
 		StatusCode: http.StatusBadRequest,
 	}
 	assert.Equal(t, &wantRejectedResponse, rejectedResponse)
+}
+
+func TestConvertAmountToReadableString(t *testing.T) {
+	parsedAmount, err := amount.ParseInt64("500")
+	require.NoError(t, err)
+	assert.Equal(t, int64(5000000000), parsedAmount)
+
+	readableAmount, err := convertAmountToReadableString(parsedAmount)
+	require.NoError(t, err)
+	assert.Equal(t, "500.00", readableAmount)
 }
