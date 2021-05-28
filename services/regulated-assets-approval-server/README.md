@@ -1,10 +1,13 @@
 # regulated-assets-approval-server
 
 ```sh
-Status: unreleased
+Status: supporting SEP-8 transactions revision with a simplified rule:
+- only revises payment type operations
+- payments with amount lower than or equal the configured threshold are revised successfully
+- payments with amount exceeding the threshold need further action
 ```
 
-This is a [SEP-8] Approval Server reference implementation based on SEP-8 v1.6.1
+This is a [SEP-8] Approval Server reference implementation based on SEP-8 v1.7.1
 intended for **testing only**. It is being conceived to:
 
 1. Be used as an example of how regulated assets transactions can be validated
@@ -64,7 +67,10 @@ Flags:
 
 #### Migration files
 
-regulated-assets-approval-server builds the migrations into the binary. If there are any changes to the db(adding, removing or updating tables) generate a new `internal/db/dbmigrate/dbmigrate_generated.go` using the `gogenerate.sh` script located at the root of the repo.
+This project builds the migrations into a binary and embeds it into the built
+project. If there are any changes to the db schema, generate a new version of
+`internal/db/dbmigrate/dbmigrate_generated.go` using the `gogenerate.sh` script
+located at the root of the repo.
 
 ```sh
 $ ./gogenerate.sh
@@ -81,32 +87,36 @@ Usage:
   regulated-assets-approval-server serve [flags]
 
 Flags:
-      --asset-code string              The code of the regulated asset (ASSET_CODE)
-      --database-url string            Database URL (DATABASE_URL) (default "postgres://localhost:5432/?sslmode=disable")
-      --friendbot-payment-amount int   The amount of regulated assets the friendbot will be distributing (FRIENDBOT_PAYMENT_AMOUNT) (default 10000)
-      --horizon-url string             Horizon URL used for looking up account details (HORIZON_URL) (default "https://horizon-testnet.stellar.org/")
-      --issuer-account-secret string   Secret key of the asset issuer's stellar account. (ISSUER_ACCOUNT_SECRET)
-      --network-passphrase string      Network passphrase of the Stellar network transactions should be signed for (NETWORK_PASSPHRASE) (default "Test SDF Network ; September 2015")
-      --port int                       Port to listen and serve on (PORT) (default 8000)
-      --base-url string                The base url address to this server(BASE_URL)
-      --kyc-required-payment-amount-threshold string The amount threshold when KYC is required, may contain decimals and is greater than 0 (KYC_REQUIRED_PAYMENT_AMOUNT_THRESHOLD)(default 500 units)
+      --asset-code string                              The code of the regulated asset (ASSET_CODE)
+      --base-url string                                The base url address to this server (BASE_URL)
+      --database-url string                            Database URL (DATABASE_URL) (default "postgres://localhost:5432/?sslmode=disable")
+      --friendbot-payment-amount int                   The amount of regulated assets the friendbot will be distributing (FRIENDBOT_PAYMENT_AMOUNT) (default 10000)
+      --horizon-url string                             Horizon URL used for looking up account details (HORIZON_URL) (default "https://horizon-testnet.stellar.org/")
+      --issuer-account-secret string                   Secret key of the issuer account. (ISSUER_ACCOUNT_SECRET)
+      --kyc-required-payment-amount-threshold string   The amount threshold when KYC is required, may contain decimals and is greater than 0 (KYC_REQUIRED_PAYMENT_AMOUNT_THRESHOLD) (default "500")
+      --network-passphrase string                      Network passphrase of the Stellar network transactions should be signed for (NETWORK_PASSPHRASE) (default "Test SDF Network ; September 2015")
+      --port int                                       Port to listen and serve on (PORT) (default 8000)
 ```
 
 ## Account Setup
 
 In order to properly use this server for regulated assets, the account whose
-secret was added in `--issuer-account-secret (ACCOUNT_ISSUER_SECRET)` needs to
+secret was added in `--issuer-account-secret (ISSUER_ACCOUNT_SECRET)` needs to
 be configured according with SEP-8 [authorization flags] by setting both
 `Authorization Required` and `Authorization Revocable` flags. This allows the
 issuer to grant and revoke authorization to transact the asset at will.
 
 You can use [this
 link](https://laboratory.stellar.org/#txbuilder?params=eyJhdHRyaWJ1dGVzIjp7ImZlZSI6IjEwMCIsImJhc2VGZWUiOiIxMDAiLCJtaW5GZWUiOiIxMDAifSwiZmVlQnVtcEF0dHJpYnV0ZXMiOnsibWF4RmVlIjoiMTAwIn0sIm9wZXJhdGlvbnMiOlt7ImlkIjowLCJhdHRyaWJ1dGVzIjp7InNldEZsYWdzIjozfSwibmFtZSI6InNldE9wdGlvbnMifV19)
-to set those flags. Just click the link, fulfill the account address, sequence
-number, then the account secret and submit the transaction.
+to set those flags in Stellar Laboratory. Just click the link, fill the account
+address and sequence number, then the account secret and submit the transaction.
 
-After setting up the issuer account you can fund a stellar account with an initial balance of the regulated asset with our internal `friendbot/?addr={stellar_address}` endpoint.
-This endpoint is not part of the official SEP-8 Approval Server spec, it's a debug feature to allow accounts to test sending transactions (payments with the issuer's regulated asset) to the server.
+After setting up the issuer account you can send some unities of the regulkated
+asset to a stellar account using our internal
+`friendbot/?addr={stellar_address}` endpoint. This endpoint is not part of the
+official SEP-8 Approval Server spec, it's a debug feature to allow accounts to
+test sending transactions (payments with the issuer's regulated asset) to the
+server.
 
 ### `GET /friendbot?addr={stellar_address}`
 
@@ -118,10 +128,13 @@ link](https://laboratory.stellar.org/#txbuilder?params=eyJhdHRyaWJ1dGVzIjp7ImZlZ
 to do that in Stellar Laboratory.
 
 ## API Spec
+
 ### `POST /tx-approve`
 
-This is the core [SEP-8] endpoint used to validate and process approval/revision/rejection of regulated assets transactions.
-Note: The example responses below have set their `base-url` env var to `"https://sep8-base-url.com"`.
+This is the core [SEP-8] endpoint used to validate and process
+approval/revision/rejection of regulated assets transactions. Note: The example
+responses below have set their `base-url` env var configured to
+`"https://sep8-base-url.com"`.
 
 **Request:**
 
@@ -133,7 +146,7 @@ Note: The example responses below have set their `base-url` env var to `"https:/
 
 **Responses:**
 
-_Revised:_ This response means the transaction was revised to be made compliant,
+_Revised:_ this response means the transaction was revised to be made compliant,
 and signed by the issuer. For more info read the SEP-8 [Revised] section.
 
 ```json
@@ -144,7 +157,7 @@ and signed by the issuer. For more info read the SEP-8 [Revised] section.
 }
 ```
 
-_Rejected:_ This response means the transaction is not and couldn't be made
+_Rejected:_ this response means the transaction is not and couldn't be made
 compliant. For more info read the SEP-8 [Rejected] section.
 
 ```json
@@ -154,8 +167,7 @@ compliant. For more info read the SEP-8 [Rejected] section.
 }
 ```
 
-_Action Required:_
-This response means the user must complete an action before this transaction can
+_Action Required:_ this response means the user must complete an action before this transaction can
 be approved. The approval server will provide a URL that facilitates the action.
 Upon completion, the user can resubmit the transaction. For more info read the
 SEP-8 [Action Required] section.
@@ -177,10 +189,12 @@ SEP-8 [Action Required] section.
 This endpoint is used for the extra action after `/tx-approve`, as described in
 the SEP-8 [Action Required] section.
 
-Currently an arbitrarily criteria is implemented, email addresses starting with "x" will have the KYC
-automatically denied while all other emails will be accepted.
+Currently an arbitrarily criteria is implemented: email addresses starting with
+"x" will have the KYC automatically denied while all other emails will be
+accepted.
 
-Note: Subsequent KYC attempts with new (valid)emails addresses will approve your account for KYC required transactions.
+_Note: you'll need to resubmit your transaction to
+[`/tx_approve`](#post-tx-approve) in order to verify if your KYC was approved._
 
 **Request:**
 
@@ -198,7 +212,8 @@ Note: Subsequent KYC attempts with new (valid)emails addresses will approve your
 }
 ```
 
-After the user has been approved or rejected they can POST their transaction to [`POST /tx-approve`](#post-tx-approve) for revision.
+After the user has been approved or rejected they can POST their transaction to
+[`POST /tx-approve`](#post-tx-approve) for revision.
 
 If their KYC was rejected they should see a rejection response.
 **Response (rejected for emails staring with "x"):**
@@ -214,9 +229,11 @@ If their KYC was rejected they should see a rejection response.
 
 Returns the detail of an account that requested KYC, as well some metadata about
 its status.
-Note: This functionality is for test/debugging purposes and it's not part of the [SEP-8] spec.
 
-**Response (No KYC Submitted):**
+_Note: This functionality is for test/debugging purposes and it's not
+part of the [SEP-8] spec._
+
+**Response (pending KYC submission):**
 
 ```json
 {
@@ -226,7 +243,7 @@ Note: This functionality is for test/debugging purposes and it's not part of the
 }
 ```
 
-**Response (Approved KYC):**
+**Response (approved KYC):**
 
 ```json
 {
@@ -239,7 +256,7 @@ Note: This functionality is for test/debugging purposes and it's not part of the
 }
 ```
 
-**Response (Rejected KYC):**
+**Response (rejected KYC):**
 
 ```json
 {
@@ -256,7 +273,9 @@ Note: This functionality is for test/debugging purposes and it's not part of the
 
 Deletes a stellar account from the list of KYCs. If the stellar address is not
 in the database to be deleted the server will return with a `404 - Not Found`.
-Note: This functionality is for test/debugging purposes and it's not part of the [SEP-8] spec.
+
+_Note: This functionality is for test/debugging purposes and it's not part of
+the [SEP-8] spec._
 
 **Response:**
 
