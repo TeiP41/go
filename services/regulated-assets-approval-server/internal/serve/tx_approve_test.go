@@ -292,44 +292,32 @@ func TestTxApproveHandler_handleActionRequiredResponseIfNeeded(t *testing.T) {
 	require.Equal(t, NewRejectedTxApprovalResponse("Your KYC was rejected and you're not authorized for operations above 500.00 FOO."), txApprovalResp)
 }
 
-func TestTxApproveHandlerTxApprove(t *testing.T) {
+func TestTxApproveHandlerTxApprove_rejected(t *testing.T) {
 	ctx := context.Background()
 	db := dbtest.Open(t)
 	defer db.Close()
 	conn := db.Open()
 	defer conn.Close()
 
-	// Perpare accounts on mock horizon.
+	// prepare accounts on mock horizon
 	issuerKP := keypair.MustRandom()
 	senderKP := keypair.MustRandom()
 	receiverKP := keypair.MustRandom()
-	assetGOAT := txnbuild.CreditAsset{
-		Code:   "GOAT",
-		Issuer: issuerKP.Address(),
-	}
 	horizonMock := horizonclient.MockClient{}
-	horizonMock.
-		On("AccountDetail", horizonclient.AccountRequest{AccountID: issuerKP.Address()}).
-		Return(horizon.Account{
-			AccountID: issuerKP.Address(),
-			Sequence:  "1",
-		}, nil)
 	horizonMock.
 		On("AccountDetail", horizonclient.AccountRequest{AccountID: senderKP.Address()}).
 		Return(horizon.Account{
 			AccountID: senderKP.Address(),
 			Sequence:  "2",
 		}, nil)
-	horizonMock.
-		On("AccountDetail", horizonclient.AccountRequest{AccountID: receiverKP.Address()}).
-		Return(horizon.Account{
-			AccountID: receiverKP.Address(),
-			Sequence:  "3",
-		}, nil)
 
-	// Create tx-approve/ txApproveHandler.
+	// prepare txApproveHandler
 	kycThresholdAmount, err := amount.ParseInt64("500")
 	require.NoError(t, err)
+	assetGOAT := txnbuild.CreditAsset{
+		Code:   "GOAT",
+		Issuer: issuerKP.Address(),
+	}
 	handler := txApproveHandler{
 		issuerKP:          issuerKP,
 		assetCode:         assetGOAT.GetCode(),
@@ -340,11 +328,8 @@ func TestTxApproveHandlerTxApprove(t *testing.T) {
 		baseURL:           "https://sep8-server.test",
 	}
 
-	// TEST "rejected" response if no transaction is submitted; with empty "tx" for txApprove.
-	req := txApproveRequest{
-		Tx: "",
-	}
-	rejectedResponse, err := handler.txApprove(ctx, req)
+	// "rejected" if tx is empty
+	rejectedResponse, err := handler.txApprove(ctx, txApproveRequest{})
 	require.NoError(t, err)
 	wantRejectedResponse := txApprovalResponse{
 		Status:     "rejected",
@@ -353,25 +338,76 @@ func TestTxApproveHandlerTxApprove(t *testing.T) {
 	}
 	assert.Equal(t, &wantRejectedResponse, rejectedResponse)
 
-	// TEST "rejected" response if can't parse XDR; with malformed "tx" for txApprove.
-	req = txApproveRequest{
-		Tx: "BADXDRTRANSACTIONENVELOPE",
-	}
-	rejectedResponse, err = handler.txApprove(ctx, req)
-	require.NoError(t, err)
-	wantRejectedResponse = txApprovalResponse{
-		Status:     "rejected",
-		Error:      `Invalid parameter "tx".`,
-		StatusCode: http.StatusBadRequest,
-	}
-	assert.Equal(t, &wantRejectedResponse, rejectedResponse)
-
-	// Prepare invalid(non generic transaction) "tx" for txApprove.
-	senderAcc, err := handler.horizonClient.AccountDetail(horizonclient.AccountRequest{AccountID: senderKP.Address()})
-	require.NoError(t, err)
+	// rejected if the single operation is not a payment
 	tx, err := txnbuild.NewTransaction(
 		txnbuild.TransactionParams{
-			SourceAccount:        &senderAcc,
+			SourceAccount: &horizon.Account{
+				AccountID: senderKP.Address(),
+				Sequence:  "2",
+			},
+			IncrementSequenceNum: true,
+			Operations: []txnbuild.Operation{
+				&txnbuild.BumpSequence{},
+			},
+			BaseFee:    txnbuild.MinBaseFee,
+			Timebounds: txnbuild.NewInfiniteTimeout(),
+		},
+	)
+	require.NoError(t, err)
+	txe, err := tx.Base64()
+	require.NoError(t, err)
+
+	txApprovalResp, err := handler.txApprove(ctx, txApproveRequest{Tx: txe})
+	require.NoError(t, err)
+	wantTxApprovalResp := &txApprovalResponse{
+		Status:     "rejected",
+		Error:      "There is one or more unauthorized operations in the provided transaction.",
+		StatusCode: http.StatusBadRequest,
+	}
+	assert.Equal(t, wantTxApprovalResp, txApprovalResp)
+
+	// rejected if payment asset is not supported
+	tx, err = txnbuild.NewTransaction(
+		txnbuild.TransactionParams{
+			SourceAccount: &horizon.Account{
+				AccountID: senderKP.Address(),
+				Sequence:  "2",
+			},
+			IncrementSequenceNum: true,
+			Operations: []txnbuild.Operation{
+				&txnbuild.Payment{
+					Destination: receiverKP.Address(),
+					Amount:      "1",
+					Asset: txnbuild.CreditAsset{
+						Code:   "FOO",
+						Issuer: keypair.MustRandom().Address(),
+					},
+				},
+			},
+			BaseFee:    txnbuild.MinBaseFee,
+			Timebounds: txnbuild.NewInfiniteTimeout(),
+		},
+	)
+	require.NoError(t, err)
+	txe, err = tx.Base64()
+	require.NoError(t, err)
+
+	txApprovalResp, err = handler.txApprove(ctx, txApproveRequest{Tx: txe})
+	require.NoError(t, err)
+	wantTxApprovalResp = &txApprovalResponse{
+		Status:     "rejected",
+		Error:      "The payment asset is not supported by this issuer.",
+		StatusCode: http.StatusBadRequest,
+	}
+	assert.Equal(t, wantTxApprovalResp, txApprovalResp)
+
+	// rejected if sequence number is not incremental
+	tx, err = txnbuild.NewTransaction(
+		txnbuild.TransactionParams{
+			SourceAccount: &horizon.Account{
+				AccountID: senderKP.Address(),
+				Sequence:  "20",
+			},
 			IncrementSequenceNum: true,
 			Operations: []txnbuild.Operation{
 				&txnbuild.Payment{
@@ -385,36 +421,67 @@ func TestTxApproveHandlerTxApprove(t *testing.T) {
 		},
 	)
 	require.NoError(t, err)
-	feeBumpTx, err := txnbuild.NewFeeBumpTransaction(
-		txnbuild.FeeBumpTransactionParams{
-			Inner:      tx,
-			FeeAccount: receiverKP.Address(),
-			BaseFee:    2 * txnbuild.MinBaseFee,
-		},
-	)
-	require.NoError(t, err)
-	feeBumpTxEnc, err := feeBumpTx.Base64()
+	txe, err = tx.Base64()
 	require.NoError(t, err)
 
-	// TEST "rejected" response if a non generic transaction fails, same result as malformed XDR.
-	req = txApproveRequest{
-		Tx: feeBumpTxEnc,
+	txApprovalResp, err = handler.txApprove(ctx, txApproveRequest{Tx: txe})
+	require.NoError(t, err)
+	wantTxApprovalResp = &txApprovalResponse{
+		Status:     "rejected",
+		Error:      "Invalid transaction sequence number.",
+		StatusCode: http.StatusBadRequest,
 	}
-	rejectedResponse, err = handler.txApprove(ctx, req)
-	require.NoError(t, err)
-	assert.Equal(t, &wantRejectedResponse, rejectedResponse) // wantRejectedResponse is identical to "if can't parse XDR".
+	assert.Equal(t, wantTxApprovalResp, txApprovalResp)
+}
 
-	// Prepare transaction sourceAccount the same as the server issuer account for txApprove.
-	issuerAcc, err := handler.horizonClient.AccountDetail(horizonclient.AccountRequest{AccountID: issuerKP.Address()})
+func TestTxApproveHandlerTxApprove_actionRequired(t *testing.T) {
+	ctx := context.Background()
+	db := dbtest.Open(t)
+	defer db.Close()
+	conn := db.Open()
+	defer conn.Close()
+
+	// prepare accounts on mock horizon
+	issuerKP := keypair.MustRandom()
+	senderKP := keypair.MustRandom()
+	receiverKP := keypair.MustRandom()
+	horizonMock := horizonclient.MockClient{}
+	horizonMock.
+		On("AccountDetail", horizonclient.AccountRequest{AccountID: senderKP.Address()}).
+		Return(horizon.Account{
+			AccountID: senderKP.Address(),
+			Sequence:  "2",
+		}, nil)
+
+	// prepare txApproveHandler
+	kycThresholdAmount, err := amount.ParseInt64("500")
 	require.NoError(t, err)
-	tx, err = txnbuild.NewTransaction(
+	assetGOAT := txnbuild.CreditAsset{
+		Code:   "GOAT",
+		Issuer: issuerKP.Address(),
+	}
+	handler := txApproveHandler{
+		issuerKP:          issuerKP,
+		assetCode:         assetGOAT.GetCode(),
+		horizonClient:     &horizonMock,
+		networkPassphrase: network.TestNetworkPassphrase,
+		db:                conn,
+		kycThreshold:      kycThresholdAmount,
+		baseURL:           "https://sep8-server.test",
+	}
+
+	// rejected if sequence number is not incremental
+	tx, err := txnbuild.NewTransaction(
 		txnbuild.TransactionParams{
-			SourceAccount:        &issuerAcc,
+			SourceAccount: &horizon.Account{
+				AccountID: senderKP.Address(),
+				Sequence:  "2",
+			},
 			IncrementSequenceNum: true,
 			Operations: []txnbuild.Operation{
 				&txnbuild.Payment{
-					Destination: senderKP.Address(),
-					Amount:      "1",
+					Destination: receiverKP.Address(),
+					Amount:      "501",
 					Asset:       assetGOAT,
 				},
 			},
@@ -423,142 +490,76 @@ func TestTxApproveHandlerTxApprove(t *testing.T) {
 		},
 	)
 	require.NoError(t, err)
-	txEnc, err := tx.Base64()
+	txe, err := tx.Base64()
 	require.NoError(t, err)
 
-	// TEST "rejected" response for sender account; transaction sourceAccount the same as the server issuer account.
-	req = txApproveRequest{
-		Tx: txEnc,
-	}
-	rejectedResponse, err = handler.txApprove(ctx, req)
-	require.NoError(t, err)
-	wantRejectedResponse = txApprovalResponse{
-		Status:     "rejected",
-		Error:      "Transaction source account is invalid.",
-		StatusCode: http.StatusBadRequest,
-	}
-	assert.Equal(t, &wantRejectedResponse, rejectedResponse)
-
-	// Prepare transaction where transaction's payment operation sourceAccount the same as the server issuer account.
-	tx, err = txnbuild.NewTransaction(
-		txnbuild.TransactionParams{
-			SourceAccount:        &senderAcc,
-			IncrementSequenceNum: true,
-			Operations: []txnbuild.Operation{
-				&txnbuild.Payment{
-					SourceAccount: issuerKP.Address(),
-					Destination:   senderKP.Address(),
-					Amount:        "1",
-					Asset:         assetGOAT,
-				},
-			},
-			BaseFee:    txnbuild.MinBaseFee,
-			Timebounds: txnbuild.NewInfiniteTimeout(),
-		},
-	)
-	require.NoError(t, err)
-	txEnc, err = tx.Base64()
+	txApprovalResp, err := handler.txApprove(ctx, txApproveRequest{Tx: txe})
 	require.NoError(t, err)
 
-	// TEST "rejected" response for sender account; payment operation sourceAccount the same as the server issuer account.
-	req = txApproveRequest{
-		Tx: txEnc,
-	}
-	rejectedResponse, err = handler.txApprove(ctx, req)
-	require.NoError(t, err)
-	wantRejectedResponse = txApprovalResponse{
-		Status:     "rejected",
-		Error:      "There is one or more unauthorized operations in the provided transaction.",
-		StatusCode: http.StatusBadRequest,
-	}
-	assert.Equal(t, &wantRejectedResponse, rejectedResponse)
-
-	// Prepare transaction where operation is not a payment (in this case allowing trust for receiverAccKP).
-	tx, err = txnbuild.NewTransaction(
-		txnbuild.TransactionParams{
-			SourceAccount:        &senderAcc,
-			IncrementSequenceNum: true,
-			Operations: []txnbuild.Operation{
-				&txnbuild.AllowTrust{
-					Trustor:   receiverKP.Address(),
-					Type:      assetGOAT,
-					Authorize: true,
-				},
-			},
-			BaseFee:    txnbuild.MinBaseFee,
-			Timebounds: txnbuild.NewInfiniteTimeout(),
-		},
-	)
-	require.NoError(t, err)
-	txEnc, err = tx.Base64()
-
-	// TEST "rejected" response if operation is not a payment (in this case allowing trust for receiverAccKP).
-	req = txApproveRequest{
-		Tx: txEnc,
-	}
-	rejectedResponse, err = handler.txApprove(ctx, req)
-	require.NoError(t, err)
-	wantRejectedResponse = txApprovalResponse{
-		Status:     "rejected",
-		Error:      "There is one or more unauthorized operations in the provided transaction.",
-		StatusCode: http.StatusBadRequest,
-	}
-	assert.Equal(t, &wantRejectedResponse, rejectedResponse)
-
-	// Prepare transaction with multiple operations.
-	tx, err = txnbuild.NewTransaction(
-		txnbuild.TransactionParams{
-			SourceAccount:        &senderAcc,
-			IncrementSequenceNum: true,
-			Operations: []txnbuild.Operation{
-				&txnbuild.Payment{
-					SourceAccount: senderKP.Address(),
-					Destination:   receiverKP.Address(),
-					Amount:        "1",
-					Asset:         assetGOAT,
-				},
-				&txnbuild.Payment{
-					SourceAccount: senderKP.Address(),
-					Destination:   receiverKP.Address(),
-					Amount:        "2",
-					Asset:         assetGOAT,
-				},
-			},
-			BaseFee:    txnbuild.MinBaseFee,
-			Timebounds: txnbuild.NewInfiniteTimeout(),
-		},
-	)
-	require.NoError(t, err)
-	txEnc, err = tx.Base64()
+	var callbackID string
+	q := `SELECT callback_id FROM accounts_kyc_status WHERE stellar_address = $1`
+	err = conn.QueryRowContext(ctx, q, senderKP.Address()).Scan(&callbackID)
 	require.NoError(t, err)
 
-	// TEST "rejected" response for sender account; transaction with multiple operations.
-	req = txApproveRequest{
-		Tx: txEnc,
+	wantResp := &txApprovalResponse{
+		Status:       sep8StatusActionRequired,
+		Message:      "Payments exceeding 500.00 GOAT require KYC approval. Please provide an email address.",
+		ActionMethod: "POST",
+		StatusCode:   http.StatusOK,
+		ActionURL:    "https://sep8-server.test/kyc-status/" + callbackID,
+		ActionFields: []string{"email_address"},
 	}
-	rejectedResponse, err = handler.txApprove(ctx, req)
-	require.NoError(t, err)
-	wantRejectedResponse = txApprovalResponse{
-		Status:     "rejected",
-		Error:      "Please submit a transaction with exactly one operation of type payment.",
-		StatusCode: http.StatusBadRequest,
-	}
-	assert.Equal(t, &wantRejectedResponse, rejectedResponse)
+	require.Equal(t, wantResp, txApprovalResp)
+}
+func TestTxApproveHandlerTxApprove_revised(t *testing.T) {
+	ctx := context.Background()
+	db := dbtest.Open(t)
+	defer db.Close()
+	conn := db.Open()
+	defer conn.Close()
 
-	// Prepare transaction where sourceAccount seq num too far in the future.
-	tx, err = txnbuild.NewTransaction(
+	// prepare accounts on mock horizon
+	issuerKP := keypair.MustRandom()
+	senderKP := keypair.MustRandom()
+	receiverKP := keypair.MustRandom()
+	horizonMock := horizonclient.MockClient{}
+	horizonMock.
+		On("AccountDetail", horizonclient.AccountRequest{AccountID: senderKP.Address()}).
+		Return(horizon.Account{
+			AccountID: senderKP.Address(),
+			Sequence:  "2",
+		}, nil)
+
+	// prepare txApproveHandler
+	kycThresholdAmount, err := amount.ParseInt64("500")
+	require.NoError(t, err)
+	assetGOAT := txnbuild.CreditAsset{
+		Code:   "GOAT",
+		Issuer: issuerKP.Address(),
+	}
+	handler := txApproveHandler{
+		issuerKP:          issuerKP,
+		assetCode:         assetGOAT.GetCode(),
+		horizonClient:     &horizonMock,
+		networkPassphrase: network.TestNetworkPassphrase,
+		db:                conn,
+		kycThreshold:      kycThresholdAmount,
+		baseURL:           "https://sep8-server.test",
+	}
+
+	// rejected if sequence number is not incremental
+	tx, err := txnbuild.NewTransaction(
 		txnbuild.TransactionParams{
 			SourceAccount: &horizon.Account{
 				AccountID: senderKP.Address(),
-				Sequence:  "50",
+				Sequence:  "2",
 			},
 			IncrementSequenceNum: true,
 			Operations: []txnbuild.Operation{
 				&txnbuild.Payment{
-					SourceAccount: senderKP.Address(),
-					Destination:   receiverKP.Address(),
-					Amount:        "1",
-					Asset:         assetGOAT,
+					Destination: receiverKP.Address(),
+					Amount:      "500",
+					Asset:       assetGOAT,
 				},
 			},
 			BaseFee:    txnbuild.MinBaseFee,
@@ -566,21 +567,52 @@ func TestTxApproveHandlerTxApprove(t *testing.T) {
 		},
 	)
 	require.NoError(t, err)
-	txEnc, err = tx.Base64()
+	txe, err := tx.Base64()
 	require.NoError(t, err)
 
-	// TEST "rejected" response if transaction source account seq num is not equal to account sequence+1.
-	req = txApproveRequest{
-		Tx: txEnc,
-	}
-	rejectedResponse, err = handler.txApprove(ctx, req)
+	txApprovalResp, err := handler.txApprove(ctx, txApproveRequest{Tx: txe})
 	require.NoError(t, err)
-	wantRejectedResponse = txApprovalResponse{
-		Status:     "rejected",
-		Error:      "Invalid transaction sequence number.",
-		StatusCode: http.StatusBadRequest,
-	}
-	assert.Equal(t, &wantRejectedResponse, rejectedResponse)
+	require.Equal(t, sep8StatusRevised, txApprovalResp.Status)
+	require.Equal(t, http.StatusOK, txApprovalResp.StatusCode)
+	require.Equal(t, "Authorization and deauthorization operations were added.", txApprovalResp.Message)
+
+	gotGenericTx, err := txnbuild.TransactionFromXDR(txApprovalResp.Tx)
+	require.NoError(t, err)
+	gotTx, ok := gotGenericTx.Transaction()
+	require.True(t, ok)
+	require.Equal(t, senderKP.Address(), gotTx.SourceAccount().AccountID)
+	require.Equal(t, int64(3), gotTx.SourceAccount().Sequence)
+
+	require.Len(t, gotTx.Operations(), 5)
+	// AllowTrust op where issuer fully authorizes account A, asset X
+	op0, ok := gotTx.Operations()[0].(*txnbuild.AllowTrust)
+	require.True(t, ok)
+	assert.Equal(t, op0.Trustor, senderKP.Address())
+	assert.Equal(t, op0.Type.GetCode(), assetGOAT.GetCode())
+	require.True(t, op0.Authorize)
+	// AllowTrust op where issuer fully authorizes account B, asset X
+	op1, ok := gotTx.Operations()[1].(*txnbuild.AllowTrust)
+	require.True(t, ok)
+	assert.Equal(t, op1.Trustor, receiverKP.Address())
+	assert.Equal(t, op1.Type.GetCode(), assetGOAT.GetCode())
+	require.True(t, op1.Authorize)
+	// Payment from A to B
+	op2, ok := gotTx.Operations()[2].(*txnbuild.Payment)
+	require.True(t, ok)
+	assert.Equal(t, op2.Destination, receiverKP.Address())
+	assert.Equal(t, op2.Asset, assetGOAT)
+	// AllowTrust op where issuer fully deauthorizes account B, asset X
+	op3, ok := gotTx.Operations()[3].(*txnbuild.AllowTrust)
+	require.True(t, ok)
+	assert.Equal(t, op3.Trustor, receiverKP.Address())
+	assert.Equal(t, op3.Type.GetCode(), assetGOAT.GetCode())
+	require.False(t, op3.Authorize)
+	// AllowTrust op where issuer fully deauthorizes account A, asset X
+	op4, ok := gotTx.Operations()[4].(*txnbuild.AllowTrust)
+	require.True(t, ok)
+	assert.Equal(t, op4.Trustor, senderKP.Address())
+	assert.Equal(t, op4.Type.GetCode(), assetGOAT.GetCode())
+	require.False(t, op4.Authorize)
 }
 
 func TestConvertAmountToReadableString(t *testing.T) {
