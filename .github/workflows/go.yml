@@ -53,11 +53,7 @@ jobs:
     - run: ./gogenerate.sh
     - run: ./govet.sh
     - run: ./staticcheck.sh
-    
-    # TODO: check deprecation todos
-
     - run: go build ./...
-
     - run: go test -race -cover ./...
       env: 
         PGHOST: localhost
