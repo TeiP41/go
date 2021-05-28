@@ -59,13 +59,13 @@ func (h txApproveHandler) validate() error {
 	return nil
 }
 
-func convertThresholdToReadableString(threshold int64) (string, error) {
-	thresholdStr := amount.StringFromInt64(threshold)
-	res, err := strconv.ParseFloat(thresholdStr, 1)
+func convertAmountToReadableString(threshold int64) (string, error) {
+	amountStr := amount.StringFromInt64(threshold)
+	amountFloat, err := strconv.ParseFloat(amountStr, 64)
 	if err != nil {
 		return "", errors.Wrap(err, "converting threshold amount from string to float")
 	}
-	return fmt.Sprintf("%.2f", res), nil
+	return fmt.Sprintf("%.2f", amountFloat), nil
 }
 
 func (h txApproveHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -278,7 +278,7 @@ func (h txApproveHandler) handleKYCRequiredOperationIfNeeded(ctx context.Context
 		return nil, nil
 	}
 	if rejectedAt.Valid {
-		kycThreshold, err := convertThresholdToReadableString(h.kycThreshold)
+		kycThreshold, err := convertAmountToReadableString(h.kycThreshold)
 		if err != nil {
 			return nil, errors.Wrap(err, "converting kycThreshold to human readable string")
 		}
