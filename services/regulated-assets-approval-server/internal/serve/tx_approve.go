@@ -95,9 +95,8 @@ func (h txApproveHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	txApproveResp.Render(w)
 }
 
-// validateInput performs some validations on the provided transaction. It can
-// reject the transaction based on general criteria that would be applied in any
-// approval server.
+// validateInput validates if the input parameters contain a valid transaction
+// and if the source account is not set in a way that would harm the issuer.
 func (h txApproveHandler) validateInput(ctx context.Context, in txApproveRequest) (*txApprovalResponse, *txnbuild.Transaction) {
 	if in.Tx == "" {
 		log.Ctx(ctx).Error(`request is missing parameter "tx".`)
@@ -117,9 +116,7 @@ func (h txApproveHandler) validateInput(ctx context.Context, in txApproveRequest
 	}
 
 	if tx.SourceAccount().AccountID == h.issuerKP.Address() {
-		log.Ctx(ctx).Errorf("transaction %s sourceAccount is the same as the server issuer account %s",
-			in.Tx,
-			h.issuerKP.Address())
+		log.Ctx(ctx).Errorf("transaction %s sourceAccount is the same as the server issuer account %s", in.Tx, h.issuerKP.Address())
 		return NewRejectedTxApprovalResponse("Transaction source account is invalid."), nil
 	}
 

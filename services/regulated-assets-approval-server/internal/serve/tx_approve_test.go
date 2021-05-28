@@ -112,6 +112,111 @@ func TestTxApproveHandlerValidate(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestTxApproveHandler_validateInput(t *testing.T) {
+	h := txApproveHandler{}
+	ctx := context.Background()
+
+	// rejects if incoming tx is empty
+	in := txApproveRequest{}
+	txApprovalResp, gotTx := h.validateInput(ctx, in)
+	require.Equal(t, NewRejectedTxApprovalResponse("Missing parameter \"tx\"."), txApprovalResp)
+	require.Nil(t, gotTx)
+
+	// rejects if incoming tx is invalid
+	in = txApproveRequest{Tx: "foobar"}
+	txApprovalResp, gotTx = h.validateInput(ctx, in)
+	require.Equal(t, NewRejectedTxApprovalResponse("Invalid parameter \"tx\"."), txApprovalResp)
+	require.Nil(t, gotTx)
+
+	// rejects if incoming tx is a fee bump transaction
+	in = txApproveRequest{Tx: "AAAABQAAAAAo/cVyQxyGh7F/Vsj0BzfDYuOJvrwgfHGyqYFpHB5RCAAAAAAAAADIAAAAAgAAAAAo/cVyQxyGh7F/Vsj0BzfDYuOJvrwgfHGyqYFpHB5RCAAAAGQAEfDJAAAAAQAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAQAAAAAo/cVyQxyGh7F/Vsj0BzfDYuOJvrwgfHGyqYFpHB5RCAAAAAAAAAAAAJiWgAAAAAAAAAAAAAAAAAAAAAA="}
+	txApprovalResp, gotTx = h.validateInput(ctx, in)
+	require.Equal(t, NewRejectedTxApprovalResponse("Invalid parameter \"tx\"."), txApprovalResp)
+	require.Nil(t, gotTx)
+
+	// rejects if tx source account is the issuer
+	clientKP := keypair.MustRandom()
+	h.issuerKP = keypair.MustRandom()
+
+	tx, err := txnbuild.NewTransaction(txnbuild.TransactionParams{
+		SourceAccount: &horizon.Account{
+			AccountID: h.issuerKP.Address(),
+			Sequence:  "1",
+		},
+		IncrementSequenceNum: true,
+		Timebounds:           txnbuild.NewInfiniteTimeout(),
+		BaseFee:              300,
+		Operations: []txnbuild.Operation{
+			&txnbuild.Payment{
+				Destination: clientKP.Address(),
+				Amount:      "1",
+				Asset:       txnbuild.NativeAsset{},
+			},
+		},
+	})
+	require.NoError(t, err)
+	txe, err := tx.Base64()
+	require.NoError(t, err)
+
+	in.Tx = txe
+	txApprovalResp, gotTx = h.validateInput(ctx, in)
+	require.Equal(t, NewRejectedTxApprovalResponse("Transaction source account is invalid."), txApprovalResp)
+	require.Nil(t, gotTx)
+
+	// rejects if tx contains more than one operation
+	tx, err = txnbuild.NewTransaction(txnbuild.TransactionParams{
+		SourceAccount: &horizon.Account{
+			AccountID: clientKP.Address(),
+			Sequence:  "1",
+		},
+		IncrementSequenceNum: true,
+		Timebounds:           txnbuild.NewInfiniteTimeout(),
+		BaseFee:              300,
+		Operations: []txnbuild.Operation{
+			&txnbuild.BumpSequence{},
+			&txnbuild.Payment{
+				Destination: clientKP.Address(),
+				Amount:      "1.0000000",
+				Asset:       txnbuild.NativeAsset{},
+			},
+		},
+	})
+	require.NoError(t, err)
+	txe, err = tx.Base64()
+	require.NoError(t, err)
+
+	in.Tx = txe
+	txApprovalResp, gotTx = h.validateInput(ctx, in)
+	require.Equal(t, NewRejectedTxApprovalResponse("Please submit a transaction with exactly one operation of type payment."), txApprovalResp)
+	require.Nil(t, gotTx)
+
+	// success
+	tx, err = txnbuild.NewTransaction(txnbuild.TransactionParams{
+		SourceAccount: &horizon.Account{
+			AccountID: clientKP.Address(),
+			Sequence:  "1",
+		},
+		IncrementSequenceNum: true,
+		Timebounds:           txnbuild.NewInfiniteTimeout(),
+		BaseFee:              300,
+		Operations: []txnbuild.Operation{
+			&txnbuild.Payment{
+				Destination: clientKP.Address(),
+				Amount:      "1.0000000",
+				Asset:       txnbuild.NativeAsset{},
+			},
+		},
+	})
+	require.NoError(t, err)
+	txe, err = tx.Base64()
+	require.NoError(t, err)
+
+	in.Tx = txe
+	txApprovalResp, gotTx = h.validateInput(ctx, in)
+	require.Nil(t, txApprovalResp)
+	require.Equal(t, gotTx, tx)
+}
+
 func TestConvertAmountToReadableString(t *testing.T) {
 	parsedAmount, err := amount.ParseInt64("500")
 	require.NoError(t, err)
